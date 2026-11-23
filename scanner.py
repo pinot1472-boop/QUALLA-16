@@ -5,6 +5,7 @@ import logging
 import random
 import threading
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import config
@@ -24,6 +25,7 @@ class Scanner:
         self.ranked = []                 # top 30 para /top
         self.tickers = {}
         self.stats = {}
+        self.funnel = {}
         self.last_scan = 0.0
 
     # ------------------------------------------------------------- universo
@@ -33,19 +35,34 @@ class Scanner:
             self._contracts_ts = time.time()
 
     def universe(self, tickers):
+        """Monedas a analizar. Deja en self.funnel cuántas se descartan en cada filtro."""
+        f = Counter()
+        f["contratos"] = len(self.contracts)
         rows = []
         for sym in self.contracts:
             base = sym.split("-")[0]
             if sym in config.EXCLUDE_SYMBOLS or base in config.EXCLUDE_SYMBOLS:
+                f["excluidas"] += 1
                 continue
             if not config.INCLUDE_TRADFI and config.is_tradfi(sym):
+                f["tradfi"] += 1
                 continue
             t = tickers.get(sym)
-            if not t or t["last"] <= 0 or t["qvol"] < config.MIN_QUOTE_VOL:
+            if not t or t["last"] <= 0:
+                f["sin_ticker"] += 1
+                continue
+            if t["qvol"] < config.MIN_QUOTE_VOL:
+                f["poco_volumen"] += 1
                 continue
             rows.append((t["qvol"], sym))
         rows.sort(reverse=True)
-        return [s for _, s in rows[:config.MAX_SYMBOLS]]
+        cap = config.MAX_SYMBOLS
+        if cap > 0 and len(rows) > cap:
+            f["recortadas_por_tope"] = len(rows) - cap
+            rows = rows[:cap]
+        f["analizables"] = len(rows)
+        self.funnel = dict(f)
+        return [s for _, s in rows]
 
     def get_daily(self, sym):
         day = int(time.time() // 86400)
@@ -62,10 +79,13 @@ class Scanner:
 
     # ------------------------------------------------------------- escaneo
     def _one(self, sym):
+        """-> (Setup | None, dict con el motivo de descarte)."""
+        why = {}
         k = self.api.klines(sym, config.TIMEFRAME, config.KLINE_LIMIT)
         if len(k["t"]) < 150:
-            return None
-        return strategy.analyze(sym, k, self.get_daily(sym))
+            why["reason"] = "pocas_velas"
+            return None, why
+        return strategy.analyze(sym, k, self.get_daily(sym), why=why), why
 
     def scan(self):
         t0 = time.time()
@@ -73,17 +93,25 @@ class Scanner:
         tickers = self.api.tickers()
         syms = self.universe(tickers)
         setups, errors = [], 0
+        reasons, near, no_daily = Counter(), [], 0
         with ThreadPoolExecutor(max_workers=max(1, config.WORKERS)) as ex:
             futs = {ex.submit(self._one, s): s for s in syms}
             for f, s in futs.items():
                 try:
-                    r = f.result()
-                    if r is not None:
-                        setups.append(r)
+                    r, why = f.result()
                 except Exception as e:  # noqa: BLE001
                     errors += 1
                     log.debug("scan %s: %s", s, e)
+                    continue
+                no_daily += 1 if why.get("sin_diario") else 0
+                if r is not None:
+                    setups.append(r)
+                    continue
+                reasons[why.get("reason", "?")] += 1
+                if "score" in why:                      # casi-candidatas: puntuadas pero sin setup
+                    near.append((why["score"], s, why.get("side", "?"), why.get("reason", "?")))
         setups.sort(key=lambda x: x.score, reverse=True)
+        near.sort(reverse=True)
         watch = [s for s in setups if s.score >= config.MIN_SCORE][:config.WATCHLIST_SIZE]
         with self.lock:
             self.tickers = tickers
@@ -91,8 +119,21 @@ class Scanner:
             self.ranked = setups[:30]
             self.last_scan = time.time()
             self.stats = {"universe": len(syms), "setups": len(setups), "watch": len(watch),
-                          "errors": errors, "secs": round(time.time() - t0, 1)}
-        log.info("scan: %s", self.stats)
+                          "errors": errors, "secs": round(time.time() - t0, 1),
+                          "funnel": dict(self.funnel), "descartes": dict(reasons),
+                          "sin_diario": no_daily, "near": near[:5]}
+        log.info("scan: universe=%d setups=%d watch=%d errors=%d secs=%.1f", len(syms), len(setups), len(watch),
+                 errors, self.stats["secs"])
+        log.info("scan filtros universo: %s", self.funnel)
+        log.info("scan descartes: %s%s", dict(reasons), f" · sin velas diarias: {no_daily}" if no_daily else "")
+        if near:
+            log.info("scan más cerca: %s", ", ".join(f"{sym} {sc:.0f} {side} ({why})" for sc, sym, side, why in near[:5]))
+        if self.funnel.get("recortadas_por_tope"):
+            log.warning("universo recortado: MAX_SYMBOLS=%s deja fuera %d monedas (pon MAX_SYMBOLS=0 para analizarlas todas)",
+                        config.MAX_SYMBOLS, self.funnel["recortadas_por_tope"])
+        elif len(syms) < 100 and self.funnel.get("poco_volumen", 0) > len(syms):
+            log.warning("universo pequeño (%d): MIN_QUOTE_VOL_USDT=%s descarta %d monedas por volumen",
+                        len(syms), f"{config.MIN_QUOTE_VOL:,.0f}", self.funnel["poco_volumen"])
         return list(watch)
 
     def snapshot(self):

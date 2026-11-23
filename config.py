@@ -73,8 +73,8 @@ TRIGGER_RVOL = _f("TRIGGER_RVOL", 1.3)        # volumen proyectado mínimo para 
 # ------------------------------------------------------------------ escáner
 TIMEFRAME = _s("TIMEFRAME", "15m")
 KLINE_LIMIT = _i("KLINE_LIMIT", 300)
-MIN_QUOTE_VOL = _f("MIN_QUOTE_VOL_USDT", 3_000_000)   # volumen 24h mínimo (USDT)
-MAX_SYMBOLS = _i("MAX_SYMBOLS", 400)
+MIN_QUOTE_VOL = _f("MIN_QUOTE_VOL_USDT", 1_000_000)   # volumen 24h mínimo (USDT); 0 = todas
+MAX_SYMBOLS = _i("MAX_SYMBOLS", 0)                    # tope de monedas por escaneo; 0 = sin tope (todas)
 EXCLUDE_SYMBOLS = _l("EXCLUDE_SYMBOLS", "")
 INCLUDE_TRADFI = _b("INCLUDE_TRADFI", False)  # acciones / materias primas / forex de BingX
 SCAN_INTERVAL = _i("SCAN_INTERVAL_SEC", 300)
@@ -134,5 +134,5 @@ def summary() -> str:
     return (
         f"AUTO_TRADE={AUTO_TRADE} demo={BINGX_DEMO} tf={TIMEFRAME} lev={LEVERAGE}x {MARGIN_MODE} "
         f"riesgo={RISK_PCT}% maxPos={MAX_OPEN_POSITIONS} minScore={MIN_SCORE}/{TRADE_SCORE} "
-        f"vol24h>={MIN_QUOTE_VOL:,.0f} TP={TP_R}R scan={SCAN_INTERVAL}s"
+        f"vol24h>={MIN_QUOTE_VOL:,.0f} maxSymbols={MAX_SYMBOLS or 'sin tope'} TP={TP_R}R scan={SCAN_INTERVAL}s"
     )

@@ -263,6 +263,30 @@ def test_run_loop():
     srv.shutdown()
 
 
+def test_universe_and_diagnostics():
+    print("\n[7] Universo sin tope, embudo de filtros y diagnóstico")
+    srv, world, bot = new_bot(True, auto=False)
+    config.MAX_SYMBOLS = 0
+    bot.scanner.scan()
+    f, st = bot.scanner.funnel, bot.scanner.stats
+    check(f["contratos"] == 6 and f["tradfi"] == 1 and f["poco_volumen"] == 1 and f["analizables"] == 4,
+          f"embudo del universo: {f}")
+    check(sum(st["descartes"].values()) + st["setups"] + st["errors"] == st["universe"],
+          "cada moneda analizada es setup o tiene un motivo de descarte")
+    check(len(st["near"]) > 0 and all(len(x) == 4 for x in st["near"]), "lista de casi-candidatas con score y motivo")
+    config.MAX_SYMBOLS = 2
+    bot.scanner.scan()
+    check(bot.scanner.funnel.get("recortadas_por_tope") == 2 and bot.scanner.stats["universe"] == 2,
+          "MAX_SYMBOLS recorta y lo deja registrado")
+    config.MAX_SYMBOLS = 0
+    bot.scanner.scan()
+    bot.scanner.watchlist, bot.scanner.ranked = [], []
+    txt = bot.digest_text()
+    check("Ninguna moneda" in txt and "Descartes" in txt and "Universo: 4 de 6" in txt,
+          "el radar vacío explica por qué (descartes y universo)")
+    srv.shutdown()
+
+
 if __name__ == "__main__":
     test_indicators()
     test_full_flow(True)
@@ -271,5 +295,6 @@ if __name__ == "__main__":
     test_signal_only()
     test_limits_and_commands()
     test_run_loop()
+    test_universe_and_diagnostics()
     print("\n" + ("TODO OK" if not FAILS else f"FALLOS ({len(FAILS)}):\n - " + "\n - ".join(FAILS)))
     sys.exit(1 if FAILS else 0)

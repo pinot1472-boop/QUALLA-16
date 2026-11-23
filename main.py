@@ -65,13 +65,31 @@ class Bot:
         head = (f"📡 <b>RADAR {config.TIMEFRAME}</b> · {st.get('universe', 0)} monedas · "
                 f"{st.get('watch', 0)} en vigilancia · {st.get('secs', 0)}s")
         if not rows:
-            return head + "\nNinguna moneda cumple las condiciones ahora."
+            return head + "\nNinguna moneda cumple las condiciones ahora." + self.diagnosis_text(st)
         lines = [head]
         for i, s in enumerate(rows, 1):
             gap = (s.trigger - s.price) / s.price * 100 * (1 if s.side == "LONG" else -1)
             lines.append(f"{i}. {dot(s.side)} {esc(s.symbol)} {arrow(s.side)} <b>{s.score:.0f}</b> · gatillo {fp(s.trigger)} "
                          f"({gap:+.2f}%) · BB {s.feats['bbw_pct'] * 100:.0f}% · rvol {s.feats['rvol3']:.1f}x · {s.kind}")
         return "\n".join(lines)
+
+    @staticmethod
+    def diagnosis_text(st):
+        """Por qué no hay candidatas: casi-candidatas, motivos de descarte y filtros del universo."""
+        out = []
+        near = st.get("near") or []
+        if near:
+            out.append("Más cerca (aún sin setup): "
+                       + " · ".join(f"{esc(sym)} {sc:.0f} {side}" for sc, sym, side, _ in near[:5]))
+        d = st.get("descartes") or {}
+        if d:
+            out.append("Descartes: " + ", ".join(f"{k} {v}" for k, v in sorted(d.items(), key=lambda kv: -kv[1])[:5]))
+        fu = st.get("funnel") or {}
+        if fu:
+            out.append(f"Universo: {fu.get('analizables', 0)} de {fu.get('contratos', 0)} contratos"
+                       f" (bajo volumen {fu.get('poco_volumen', 0)}, TradFi {fu.get('tradfi', 0)}"
+                       f", recortadas por tope {fu.get('recortadas_por_tope', 0)})")
+        return ("\n" + "\n".join(out)) if out else ""
 
     # ------------------------------------------------------------- bucles
     def scan_loop(self):

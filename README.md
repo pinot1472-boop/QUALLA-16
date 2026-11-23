@@ -1,6 +1,6 @@
 # OMNIX Explosion Bot — BingX · Telegram · Railway
 
-Escanea **todos los perpetuos USDT de BingX** (con volumen 24h mínimo), puntúa de 0 a 100 qué monedas están
+Escanea **todos los perpetuos USDT de BingX** (volumen 24h mínimo `MIN_QUOTE_VOL_USDT`, 1M por defecto; sin tope de monedas), puntúa de 0 a 100 qué monedas están
 **a punto de explotar en el día, por arriba o por abajo**, avisa por Telegram y (opcional) opera en BingX con SL/TP,
 breakeven y trailing. Usa la lógica de tu Pine *OMNIX Fusion* (Smart Trail, ADX, EP y Parabolic/PARA SHORT).
 
@@ -60,6 +60,24 @@ cooldown por símbolo.
 - 📡 *Radar*: resumen de las mejores cada `DIGEST_MIN` minutos.
 - 🎯/🚀 Ruptura confirmada / entrada ejecutada, 🛡 breakeven, 📈 trailing, ✅/🛑 cierre.
 - Comandos `/status /top /pause /resume` solo con `TELEGRAM_COMMANDS=true` (usa un bot de Telegram dedicado: dos programas con el mismo token y `getUpdates` se pisan).
+
+## Diagnóstico: ¿por qué no sale ninguna candidata?
+
+Cada escaneo escribe en los logs de Railway (busca `scan`):
+
+```
+scan: universe=412 setups=7 watch=2 errors=0 secs=61.3
+scan filtros universo: {'contratos': 612, 'tradfi': 38, 'poco_volumen': 150, 'recortadas_por_tope': 0, 'analizables': 412}
+scan descartes: {'poca_compresion': 240, 'sin_sesgo': 120, 'adr_bajo': 45}
+scan más cerca: XYZ-USDT 58 LONG (poca_compresion), ...
+```
+
+- `universe` pequeño (p. ej. 40): mira `poco_volumen` y `recortadas_por_tope`. Si es alto, revisa en Railway las variables
+  `MIN_QUOTE_VOL_USDT` (bájala o bórrala) y `MAX_SYMBOLS` (pon `0` o bórrala). El mensaje de arranque en Telegram muestra los valores activos.
+- `adr_bajo`: moneda con rango diario < `MIN_ADR_PCT` (3 %); las grandes (BTC, ETH…) suelen caer aquí.
+- `sin_sesgo` / `poca_compresion`: hay datos pero no se cumple la condición de "a punto de explotar" ahora mismo.
+- `ya_extendida`: ya rompió y está lejos del gatillo.
+- El radar de Telegram, cuando está vacío, repite estos motivos y las monedas "más cerca".
 
 ## Ajuste fino (variables)
 

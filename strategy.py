@@ -98,24 +98,34 @@ def daily_context(k, daily, now_ms):
 
 
 # ------------------------------------------------------------------ análisis principal
-def analyze(symbol, k_all, daily, now_ms=None):
-    """Devuelve el mejor Setup de la moneda (o None)."""
+def analyze(symbol, k_all, daily, now_ms=None, why=None):
+    """Devuelve el mejor Setup de la moneda (o None).
+
+    `why` (dict opcional) recibe el motivo del descarte: why["reason"] y, si hubo cálculo, why["score"]/why["side"].
+    """
+    why = why if why is not None else {}
     now_ms = now_ms or int(time.time() * 1000)
     base_ms = config.TF_SECONDS * 1000
     k = closed_only(k_all, now_ms, base_ms)
     n = len(k["c"])
     if n < 150:
+        why["reason"] = "pocas_velas"
         return None
     o, h, l, c, v = (k[x] for x in "ohlcv")
     px = float(c[-1])
     if px <= 0 or (c[-120:] <= 0).any():
+        why["reason"] = "datos_invalidos"
         return None
     a14 = float(atr(h, l, c, 14)[-1])
     if not a14 > 0:
+        why["reason"] = "datos_invalidos"
         return None
     ctx = daily_context(k, daily, now_ms)
     adr = ctx.get("adr")
+    if not ctx:
+        why["sin_diario"] = True          # sin velas diarias: no se puede filtrar por ADR (se sigue analizando)
     if adr is not None and adr < config.MIN_ADR_PCT:
+        why["reason"] = "adr_bajo"
         return None
 
     # --- compresión
@@ -203,6 +213,9 @@ def analyze(symbol, k_all, daily, now_ms=None):
     best = None
     clear_bias = (pts - other) >= 4
     ep_flag = bool(ctx.get("ep_up") if side_n == 1 else ctx.get("ep_dn"))
+    why.update(score=round(score, 1), side=side, comp=round(comp, 1), bias=round(pts - other, 1))
+    why["reason"] = ("sin_sesgo" if not clear_bias
+                     else "poca_compresion" if not (comp >= 12 or (ep_flag and bbw_pct <= 0.6)) else "ok")
     if clear_bias and (comp >= 12 or (ep_flag and bbw_pct <= 0.6)):
         buf = config.TRIGGER_BUFFER_ATR * a14
         if side_n == 1:
@@ -214,6 +227,8 @@ def analyze(symbol, k_all, daily, now_ms=None):
         dist = min(max(struct, 1.0 * a14), config.SL_ATR_MULT * a14)
         dist = min(max(dist, config.MIN_SL_PCT / 100 * trigger), config.MAX_SL_PCT / 100 * trigger)
         beyond = (px - trigger) if side_n == 1 else (trigger - px)
+        if beyond > config.MAX_CHASE_ATR * a14:
+            why["reason"] = "ya_extendida"
         if beyond <= config.MAX_CHASE_ATR * a14:
             sl = trigger - side_n * dist
             tp = trigger + side_n * dist * config.TP_R
@@ -225,6 +240,7 @@ def analyze(symbol, k_all, daily, now_ms=None):
         best = para
     if best is None:
         return None
+    why["reason"] = "ok"
     best.feats = {
         "bbw_pct": bbw_pct, "atr_ratio": atr_ratio, "sq_bars": sq_bars, "rvol3": rvol3, "adx": adx_now,
         "adx_slope": adx_slope, "loc": loc, "tdir": tdir, "htf": htf, "adr": adr, "dchg": ctx.get("dchg"),
